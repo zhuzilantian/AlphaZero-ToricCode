@@ -3,11 +3,13 @@ import csv
 import numpy as np
 from scipy.special import softmax
 from copy import deepcopy
-from typing import Union, Iterable
+from typing import List, Union, Iterable
 from gym import Env
 
 
-def play_game(env: Env, actions):
+def play_game(env: Env,
+              actions: List[int]):
+
     observation = None
     reward = 0
     done = False
@@ -21,9 +23,10 @@ def play_game(env: Env, actions):
     return observation, reward, done
 
 
-def rollout(env: Env, times: int):
-    action_n = env.action_space.n
+def rollout(env: Env,
+            times: int):
 
+    action_n = env.action_space.n
     reward = 0
     for i in range(times):
         e = deepcopy(env)
@@ -37,11 +40,9 @@ def rollout(env: Env, times: int):
     return reward / times
 
 
-def get_probs(data: Iterable[Union[int, float]], temperature=1.0):
-    return softmax([d ** (1 / temperature) for d in data]).tolist()
+def save_record(path,
+                data):
 
-
-def save_record(path, data):
     dirs, _ = os.path.split(path)
     if dirs != '':
         os.makedirs(dirs, exist_ok=True)
@@ -57,8 +58,8 @@ def save_record(path, data):
 
 
 def load_record(path):
-    data = None
 
+    data = None
     try:
         f = open(path, newline='')
     except OSError as e:

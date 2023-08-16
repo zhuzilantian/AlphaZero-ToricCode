@@ -6,7 +6,10 @@ from torch import nn, Tensor
 
 
 class ToricNetwork(nn.Module):
-    def __init__(self, input_shape: Tuple[int], output_n: int):
+    def __init__(self,
+                 input_shape: Tuple[int],
+                 output_n: int):
+
         super().__init__()
         input_n = int(np.prod(input_shape))
         out1 = int(2 ** np.ceil(np.log2(input_n)))
@@ -28,13 +31,17 @@ class ToricNetwork(nn.Module):
             nn.Tanh()
         )
 
-    def forward(self, x: Tensor) -> (Tensor, Tensor):
+    def forward(self,
+                x: Tensor) -> (Tensor, Tensor):
+
         x = self.feature(x)
         probs = self.output_p(x)
         value = self.output_v(x)
         return probs, value
 
-    def save(self, path):
+    def save(self,
+             path):
+
         dirs, _ = os.path.split(path)
         if dirs != '':
             os.makedirs(dirs, exist_ok=True)
@@ -44,21 +51,31 @@ class ToricNetwork(nn.Module):
         except OSError as e:
             print(e.strerror)
 
-    def load(self, path):
+    def load(self,
+             path):
+
+        if not os.path.exists(path):
+            return
+
         try:
             self.load_state_dict(torch.load(path))
-        except FileNotFoundError as e:
-            print(f"{e.strerror}: '{e.filename}'")
         except OSError as e:
             print(e.strerror)
 
 
 class AlphaZeroLoss(nn.Module):
-    def __init__(self, c=1):
+    def __init__(self,
+                 c=1):
+
         super().__init__()
         self.c = c
 
-    def forward(self, p: Tensor, p_t: Tensor, v: Tensor, v_t: Tensor) -> Tensor:
+    def forward(self,
+                p: Tensor,
+                p_t: Tensor,
+                v: Tensor,
+                v_t: Tensor) -> Tensor:
+
         loss_v = torch.pow(v_t - v, 2)
         loss_p = p_t * torch.log(p)
         loss_p = -loss_p.sum(dim=1, keepdim=True)

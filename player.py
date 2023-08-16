@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.special import softmax
 from copy import deepcopy
+from multiprocessing.pool import Pool
 from tqdm import tqdm
 import torch
 from gym import Env
@@ -11,46 +12,83 @@ from utils import play_game, rollout
 
 
 class Player:
-    def __init__(self, env: Env):
+    def __init__(self,
+                 env: Env):
+
         self.env = env
         self.observation_shape = env.observation_space.shape
         self.action_n = env.action_space.n
 
-    def next_action(self, observation):
+    def next_action(self,
+                    observation) -> int:
+
         raise NotImplementedError
 
-    def step(self, action):
+    def step(self,
+             action):
+
         raise NotImplementedError
 
-    def evaluation(self, times=10):
+    def evaluation(self,
+                   times=100,
+                   multiprocessing=False,
+                   processes=None):
+
+        results = []
+
+        if multiprocessing:
+            pool = Pool(processes=processes)
+            pbar = tqdm(total=times)
+            for _ in range(times):
+                results.append(pool.apply_async(self._eval, callback=lambda _: pbar.update()))
+            pool.close()
+            pool.join()
+        else:
+            for _ in tqdm(range(times)):
+                results.append(self._eval())
+
         win = 0
-
-        for _ in tqdm(range(times)):
-            o = self.env.reset()
-            while True:
-                a = self.next_action(o)
-                o, r, done, _ = self.step(a)
-                if done:
-                    if r == 1:
-                        win += 1
-                    break
+        for r in results:
+            if multiprocessing:
+                r = r.get()
+            if r == 1:
+                win += 1
 
         return win / times
 
+    def _eval(self):
+
+        o = self.env.reset()
+        while True:
+            a = self.next_action(o)
+            o, r, done, _ = self.step(a)
+            if done:
+                return r
+
 
 class RandomPlayer(Player):
-    def __init__(self, env: Env):
+    def __init__(self,
+                 env: Env):
+
         super().__init__(env)
 
-    def next_action(self, observation):
+    def next_action(self,
+                    observation) -> int:
+
         return np.random.randint(0, self.action_n)
 
-    def step(self, action):
+    def step(self,
+             action):
+
         return self.env.step(action)
 
 
 class MCTS(Player):
-    def __init__(self, env: Env, simulation_times=100, rollout_times=1):
+    def __init__(self,
+                 env: Env,
+                 simulation_times=100,
+                 rollout_times=1):
+
         super().__init__(env)
         self.env_copied = deepcopy(env)
         self.root = Node()
@@ -59,7 +97,9 @@ class MCTS(Player):
         self.simulation_times = simulation_times
         self.rollout_times = rollout_times
 
-    def next_action(self, observation) -> int:
+    def next_action(self,
+                    observation) -> int:
+
         if not np.array_equal(self.root.observation, observation):
             self.root = self.node_type(observation=observation)
 
@@ -79,24 +119,38 @@ class MCTS(Player):
         index = scores.index(max(scores))
         return index
 
-    def step(self, action: int):
+    def step(self,
+             action: int):
+
         self.root = self.root.children[action]
         self.root.parent = None
         return self.env.step(action)
 
     def _simulation(self):
+
         expansion(node=self.selected, n=self.action_n)
         return rollout(self.env_copied, self.rollout_times)
 
 
 class AlphaZero(MCTS):
-    def __init__(self, env: Env, simulation_times=100):
+    def __init__(self,
+                 env: Env,
+                 simulation_times=100,
+                 model_path=None):
+
         super().__init__(env, simulation_times)
         self.node_type = NodePUCT
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.nn = ToricNetwork(self.observation_shape, self.action_n).to(self.device)
+        self.model_path = model_path
+        self.nn_loaded = False
 
     def _simulation(self):
+
+        if not self.nn_loaded:
+            self.load_model()
+            self.nn_loaded = True
+
         o = self.selected.observation[np.newaxis, :]
         o = torch.Tensor(o).to(self.device)
         p, v = self.nn(o)
@@ -105,14 +159,20 @@ class AlphaZero(MCTS):
         expansion(node=self.selected, n=self.action_n, p=p)
         return v
 
-    def root_probs(self, temperature=1.0):
+    def root_probs(self,
+                   temperature=1.0):
+
         return softmax([c.n ** (1 / temperature) for c in self.root.children]).tolist()
 
-    def train(self, epochs=1000, lr=0.1, weight_decay=1e-4):
+    def train(self,
+              epochs=1000,
+              lr=0.1,
+              weight_decay=1e-4):
+
         optimizer = torch.optim.SGD(self.nn.parameters(), lr=lr, weight_decay=weight_decay)
         loss_fn = AlphaZeroLoss()
         loss_record = []
-        p_done = softmax([1] * self.action_n).tolist()
+        p_trivial = softmax([1] * self.action_n).tolist()
 
         for _ in tqdm(range(epochs)):
             o_gained = []
@@ -129,7 +189,7 @@ class AlphaZero(MCTS):
                 o, r, done, _ = self.step(a)
                 if done:
                     o_gained.append(o.tolist())
-                    p_gained.append(p_done)
+                    p_gained.append(p_trivial)
                     v_gained.append([r])
                     break
 
@@ -144,4 +204,16 @@ class AlphaZero(MCTS):
             optimizer.step()
             loss_record.append(loss.item())
 
+            self.save_model()
+
         return loss_record
+
+    def save_model(self):
+
+        if self.model_path is not None:
+            self.nn.save(self.model_path)
+
+    def load_model(self):
+
+        if self.model_path is not None:
+            self.nn.load(self.model_path)
